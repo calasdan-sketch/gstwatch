@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gstwatch"
+version = "0.1.0"
+description = "GST/HST small-supplier companion: C$30k threshold tests, registration timing, filing frequency, 6-year record retention"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "calasdan-sketch" }]
+keywords = ["gst", "hst", "cra", "small-supplier", "threshold", "registration", "canada", "tax"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Topic :: Office/Business :: Financial",
+]
+
+[project.scripts]
+gstwatch = "gstwatch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
