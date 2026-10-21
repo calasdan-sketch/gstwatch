@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "GST/HST small-supplier companion: C$30k threshold tests, registration timing, filing frequency, 6-year record retention"
 readme = "README.md"
 requires-python = ">=3.9"
+license = "MIT"
 authors = [{ name = "calasdan-sketch" }]
 keywords = ["gst", "hst", "cra", "small-supplier", "threshold", "registration", "canada", "tax"]
 classifiers = [
