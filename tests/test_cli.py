@@ -65,5 +65,5 @@ def test_no_input_is_usage_error(capsys):
 
 def test_bad_csv_columns(tmp_path, capsys):
     p = tmp_path / "bad.csv"
-    p.write_text("date,amount\n2026-03-31,100\n", encoding="utf-8")
+    p.write_text("when,amount\n2026-03-31,100\n", encoding="utf-8")
     assert main(["check", str(p)]) == 2

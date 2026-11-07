@@ -1,0 +1,13 @@
+{
+  "correctness": {
+    "cases": 20000,
+    "mismatches_vs_oracle": 0,
+    "seed": 20261107
+  },
+  "timing_indicative": {
+    "evaluate_400_quarters_ms_each": 2.771,
+    "load_100000_transaction_rows_s": 1.377,
+    "parse_amount_us_each": 9.12,
+    "quarters_from_100000_rows": 300
+  }
+}

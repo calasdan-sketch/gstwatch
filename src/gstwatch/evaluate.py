@@ -33,6 +33,8 @@ FILING_ANNUAL_MAX = 1_500_000
 FILING_QUARTERLY_MAX = 6_000_000
 MAX_QUARTERS = 400
 MAX_AMOUNT = 1e15
+MAX_TRANSACTIONS = 200_000
+MIN_YEAR, MAX_YEAR = 1900, 2100
 QUARTER_END_MD = {(3, 31): 1, (6, 30): 2, (9, 30): 3, (12, 31): 4}
 
 Quarter = Tuple[dt.date, float]  # (quarter end, taxable supplies)
@@ -58,7 +60,7 @@ def parse_quarter_label(text: str) -> dt.date:
     try:
         return dt.date.fromisoformat(t)
     except ValueError:
-        raise InputError(f"expected YYYY-MM-DD or YYYYQn, got {text!r}")
+        raise InputError(f"expected YYYY-MM-DD or YYYYQn, got {text!r}") from None
 
 
 def next_month_end(d: dt.date) -> dt.date:
@@ -74,6 +76,58 @@ def _qdate(idx: int) -> dt.date:
     return quarter_end(idx // 4, idx % 4 + 1)
 
 
+_PLAIN = re.compile(r"[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]{1,3})?")
+_EN_THOUSANDS = re.compile(r"[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?")
+_FR_THOUSANDS = re.compile(r"[0-9]{1,3}(?:[ \u00a0\u202f][0-9]{3})*(?:,[0-9]{1,2})?")
+_CURRENCY_PREFIX = re.compile(r"^(?:CAD|CA\$|C\$|\$)\s*", re.IGNORECASE)
+_CURRENCY_SUFFIX = re.compile(r"\s*(?:CAD|\$)$", re.IGNORECASE)
+
+
+def parse_amount(text: str) -> float:
+    """Parse a money string strictly; ambiguous or odd forms are REJECTED, never guessed.
+
+    Accepted: 1234.56, 1,234.56, 12 500,50 (fr-CA: space groups + decimal comma),
+    optional leading minus, optional C$ / $ / CAD marker. Rejected: 12,50 (could be
+    12.50 or 1250), 1_000, 0x10, non-ASCII digits, stray letters, NaN/inf.
+    """
+    t = text.strip()
+    neg = False
+    if t.startswith("-") or t.startswith("\u2212"):
+        neg, t = True, t[1:].strip()
+    t = _CURRENCY_PREFIX.sub("", t)
+    t = _CURRENCY_SUFFIX.sub("", t).strip()
+    if _PLAIN.fullmatch(t):
+        v = float(t)
+    elif _EN_THOUSANDS.fullmatch(t):
+        v = float(t.replace(",", ""))
+    elif _FR_THOUSANDS.fullmatch(t) and re.search(r"[ \u00a0\u202f]", t):
+        v = float(re.sub(r"[ \u00a0\u202f]", "", t).replace(",", "."))
+    else:
+        hint = " (ambiguous comma: write 12.50 or 1,250)" if re.fullmatch(r"[0-9]+,[0-9]{1,2}", t) else ""
+        raise InputError(f"bad amount {text!r}{hint}")
+    if not math.isfinite(v):
+        raise InputError(f"bad amount {text!r}")
+    return -v if neg else v
+
+
+def to_quarter_end(d: dt.date) -> dt.date:
+    """Calendar quarter end containing date d."""
+    return quarter_end(d.year, (d.month - 1) // 3 + 1)
+
+
+def aggregate_transactions(rows: Sequence[Tuple[dt.date, float]]) -> List[Quarter]:
+    """Sum dated transactions (refund rows may be negative) into calendar quarters."""
+    if len(rows) > MAX_TRANSACTIONS:
+        raise InputError(f"too many transaction rows (max {MAX_TRANSACTIONS})")
+    sums = {}
+    for d, a in rows:
+        if not math.isfinite(a):
+            raise InputError(f"amount on {d.isoformat()} is not a finite number")
+        q = to_quarter_end(d)
+        sums[q] = sums.get(q, 0.0) + a
+    return sorted(sums.items())
+
+
 def validate_quarters(quarters: Sequence[Quarter]) -> List[Quarter]:
     """Reject NaN/inf/negative/duplicate/non-calendar-quarter data."""
     if not quarters:
@@ -82,6 +136,8 @@ def validate_quarters(quarters: Sequence[Quarter]) -> List[Quarter]:
         raise InputError(f"too many quarters (max {MAX_QUARTERS})")
     seen = set()
     for d, a in quarters:
+        if not (MIN_YEAR <= d.year <= MAX_YEAR):
+            raise InputError(f"{d.isoformat()}: year must be {MIN_YEAR}-{MAX_YEAR}")
         if (d.month, d.day) not in QUARTER_END_MD:
             raise InputError(
                 f"{d.isoformat()} is not a calendar quarter end (Mar 31, Jun 30, Sep 30, Dec 31); "
@@ -109,6 +165,9 @@ class Status:
     window_total: float = 0.0
     effective_date: Optional[dt.date] = None
     register_by: Optional[dt.date] = None
+    effective_earliest: Optional[dt.date] = None
+    register_by_earliest: Optional[dt.date] = None
+    effective_basis: str = ""
     filing_frequency: str = ""
     filing_basis: str = ""
     threshold: float = THRESHOLD
@@ -119,6 +178,7 @@ class Status:
     next_quarter_headroom: Optional[float] = None
     days_to_register: Optional[int] = None
     overdue: Optional[bool] = None
+    possibly_overdue: Optional[bool] = None
     notes: List[str] = field(default_factory=list)
 
     def as_dict(self):
@@ -135,8 +195,12 @@ class Status:
             "window_total": self.window_total,
             "effective_date": iso(self.effective_date),
             "register_by": iso(self.register_by),
+            "effective_date_earliest": iso(self.effective_earliest),
+            "register_by_earliest": iso(self.register_by_earliest),
+            "effective_date_basis": self.effective_basis,
             "days_to_register": self.days_to_register,
             "overdue": self.overdue,
+            "possibly_overdue": self.possibly_overdue,
             "filing_frequency": self.filing_frequency,
             "filing_basis": self.filing_basis,
             "assumed_zero_quarters": [d.isoformat() for d in self.gaps],
@@ -152,7 +216,8 @@ def evaluate(quarters: Sequence[Quarter],
              crossing_date: Optional[dt.date] = None,
              entity: str = "supplier",
              taxi: bool = False,
-             as_of: Optional[dt.date] = None) -> Status:
+             as_of: Optional[dt.date] = None,
+             first_supply: Optional[dt.date] = None) -> Status:
     """Apply both small-supplier tests to (calendar quarter end, amount) pairs.
 
     Quarters missing between the first and last given are assumed 0 and listed
@@ -229,9 +294,22 @@ def evaluate(quarters: Sequence[Quarter],
         ]
         if crossing_date is not None and rolling:
             n.append("note: the multi-quarter test would also have tripped, later; earliest wins")
+        earliest = _qdate(i - 1) + dt.timedelta(days=1)
+        if crossing_date is None:
+            n.append(f"if the crossing supply was early in the quarter, the effective date could be "
+                     f"as early as {earliest.isoformat()} (register by "
+                     f"{(earliest + dt.timedelta(days=REGISTER_DAYS)).isoformat()}); "
+                     "register-by shown is the LATEST possible")
+        if first_supply is not None:
+            n.append("--first-supply ignored: it only applies to the multi-quarter test")
+        known = crossing_date is not None
         st = Status(small_supplier=False, trigger="single-quarter", crossing_quarter=end,
                     window=[end], window_total=amt[i], effective_date=effective,
-                    register_by=effective + dt.timedelta(days=REGISTER_DAYS), notes=n, **common)
+                    register_by=effective + dt.timedelta(days=REGISTER_DAYS),
+                    effective_earliest=effective if known else earliest,
+                    register_by_earliest=(effective if known else earliest) + dt.timedelta(days=REGISTER_DAYS),
+                    effective_basis="supply date given" if known else "latest possible = quarter end",
+                    notes=n, **common)
     elif pick == "rolling":
         j, size, s = rolling
         end = _qdate(j)
@@ -245,10 +323,33 @@ def evaluate(quarters: Sequence[Quarter],
         ]
         if crossing_date is not None:
             n.append("--crossing ignored: it only applies to the single-quarter test")
+        basis = "earliest possible = end of the month following the quarter"
+        status_end = effective
+        if first_supply is not None:
+            if first_supply <= status_end:
+                raise InputError(f"--first-supply {first_supply.isoformat()} must be after "
+                                 f"{status_end.isoformat()} (when small-supplier status ended)")
+            effective, basis = first_supply, "first supply after status ended, as given"
+            n.append(f"effective date set to your first supply after status ended: {first_supply.isoformat()}")
+        else:
+            n.append("effective date is no later than your first supply after "
+                     f"{status_end.isoformat()}; shown is the earliest possible, so the true "
+                     "register-by may be later (pass --first-supply YYYY-MM-DD)")
         st = Status(small_supplier=False, trigger="rolling", crossing_quarter=end,
                     window=[_qdate(k) for k in range(j - size + 1, j + 1)], window_total=s,
                     effective_date=effective,
-                    register_by=effective + dt.timedelta(days=REGISTER_DAYS), notes=n, **common)
+                    register_by=effective + dt.timedelta(days=REGISTER_DAYS),
+                    effective_earliest=status_end,
+                    register_by_earliest=status_end + dt.timedelta(days=REGISTER_DAYS),
+                    effective_basis=basis, notes=n, **common)
+        if single and crossing_date is None:
+            early = _qdate(single[0] - 1) + dt.timedelta(days=1)
+            if early < st.effective_earliest:
+                st.effective_earliest = early
+                st.register_by_earliest = early + dt.timedelta(days=REGISTER_DAYS)
+                st.notes.append(f"a single quarter also exceeded the threshold ({single[1].isoformat()}); "
+                                f"if that supply came early in the quarter it would be earlier "
+                                f"(as early as {early.isoformat()}): pass --crossing to settle it")
     else:
         # headroom: most the NEXT quarter can add without tripping any 1-4 quarter window
         nxt = hi + 1
@@ -263,9 +364,12 @@ def evaluate(quarters: Sequence[Quarter],
                         f"quarter ending {_qdate(nxt).isoformat()} keeps you at or under "
                         f"C${threshold:,.0f} (exceeding means strictly more)"], **common)
 
+    if first_supply is not None and st.trigger == "none":
+        st.notes.append("--first-supply ignored: you are still a small supplier")
     if as_of is not None and st.register_by:
         st.days_to_register = (st.register_by - as_of).days
         st.overdue = st.days_to_register < 0
+        st.possibly_overdue = bool(st.register_by_earliest and as_of > st.register_by_earliest)
     st.notes.append("Not modeled: associates' revenue, financial services/capital property "
                     "exclusions, voluntary registration, charities. Enter already-adjusted figures.")
     return st
@@ -282,6 +386,31 @@ def filing_frequency(annualized: float) -> str:
     return "monthly"
 
 
-def retention_deadline(transaction_date: dt.date) -> dt.date:
-    """Keep records 6 years from the END of the year they relate to."""
-    return dt.date(transaction_date.year + 6, 12, 31)
+def _add_years(d: dt.date, n: int) -> dt.date:
+    try:
+        return d.replace(year=d.year + n)
+    except ValueError:  # Feb 29 -> Feb 28
+        return d.replace(year=d.year + n, day=28)
+
+
+def retention_deadline(transaction_date: dt.date,
+                       period_end: Optional[dt.date] = None) -> dt.date:
+    """Keep records 6 years from the END of the year they relate to.
+
+    Default treats "year" as the calendar year. For a non-calendar fiscal year pass
+    ``period_end`` (the end of that fiscal year); the LATER of the two dates is
+    returned so the answer is never too early. (Whether CRA's "year" means calendar
+    or fiscal year for GST/HST is not stated on the page: unverified.)
+    """
+    if not (MIN_YEAR <= transaction_date.year <= MAX_YEAR):
+        raise InputError(f"transaction year must be {MIN_YEAR}-{MAX_YEAR}")
+    base = dt.date(transaction_date.year + 6, 12, 31)
+    if period_end is None:
+        return base
+    if period_end < transaction_date:
+        raise InputError("--period-end is before the transaction date")
+    if (period_end - transaction_date).days > 400:
+        raise InputError("--period-end is more than a year after the transaction")
+    if period_end.year > MAX_YEAR:
+        raise InputError(f"period end year must be at most {MAX_YEAR}")
+    return max(base, _add_years(period_end, 6))
