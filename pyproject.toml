@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -9,16 +9,41 @@ description = "GST/HST small-supplier companion: C$30k threshold tests, registra
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
-authors = [{ name = "calasdan-sketch" }]
+license-files = ["LICENSE"]
+authors = [{ name = "Calas Automations Inc." }]
 keywords = ["gst", "hst", "cra", "small-supplier", "threshold", "registration", "canada", "tax"]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Financial",
+    "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/calasdan-sketch/gstwatch"
+Source = "https://github.com/calasdan-sketch/gstwatch"
+Issues = "https://github.com/calasdan-sketch/gstwatch/issues"
+Changelog = "https://github.com/calasdan-sketch/gstwatch/blob/main/CHANGELOG.md"
 
 [project.scripts]
 gstwatch = "gstwatch.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+gstwatch = ["py.typed"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

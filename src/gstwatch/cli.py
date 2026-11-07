@@ -25,6 +25,7 @@ from .evaluate import (
 )
 
 MAX_CSV_BYTES = 5_000_000
+SCHEMA_VERSION = 1  # bump only if a --json field is removed or changes meaning
 
 
 def _date(text: str) -> dt.date:
@@ -38,24 +39,58 @@ def _amount(text: str) -> float:
     return parse_amount(text)
 
 
-def _read_text(path: str) -> str:
-    """Read a regular file, bounded. Refuses devices/pipes/directories (they can block or be endless)."""
-    try:
-        st = os.stat(path)
-        if not stat.S_ISREG(st.st_mode):
-            raise ValueError(f"{path!r} is not a regular file")
-        with open(path, "rb") as fh:
-            raw = fh.read(MAX_CSV_BYTES + 1)
-    except FileNotFoundError:
-        raise ValueError(f"not found: {path!r}") from None
-    except OSError as e:
-        raise ValueError(f"cannot read {path!r}: {type(e).__name__}") from None
-    if len(raw) > MAX_CSV_BYTES:
-        raise ValueError(f"CSV larger than {MAX_CSV_BYTES} bytes")
+class _Parser(argparse.ArgumentParser):
+    """argparse that honours --json for usage errors too (still exit 2, plain English)."""
+    argv_seen: "list[str]" = []
+
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f"{self.prog}: error: {_clean(message)}", file=sys.stderr)
+        if "--json" in self.argv_seen:
+            print(json.dumps({"error": _clean(message), "exit": 2, "not_tax_advice": True,
+                              "schema_version": SCHEMA_VERSION}))
+        sys.exit(2)
+
+
+def _decode(raw: bytes, label: str) -> str:
+    if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):  # Excel "Unicode Text" export (UTF-16 with BOM)
+        try:
+            return raw.decode("utf-16")
+        except UnicodeDecodeError:
+            raise ValueError(f"cannot read {label}: damaged UTF-16 text") from None
     try:
         return raw.decode("utf-8-sig")
     except UnicodeDecodeError:
-        raise ValueError(f"cannot read {path!r}: not UTF-8 text") from None
+        raise ValueError(f"cannot read {label}: not UTF-8 text (in Excel use Save As > "
+                         "CSV UTF-8)") from None
+
+
+def _read_text(path: str) -> str:
+    """Read a regular file (or stdin for ``-``), bounded.
+
+    Refuses devices/pipes/directories (they can block or be endless).
+    """
+    if path == "-":
+        try:
+            raw = sys.stdin.buffer.read(MAX_CSV_BYTES + 1)
+        except (OSError, ValueError, AttributeError):
+            raise ValueError("cannot read standard input") from None
+        label = "standard input"
+    else:
+        label = repr(path)
+        try:
+            st = os.stat(path)
+            if not stat.S_ISREG(st.st_mode):
+                raise ValueError(f"{path!r} is not a regular file")
+            with open(path, "rb") as fh:
+                raw = fh.read(MAX_CSV_BYTES + 1)
+        except FileNotFoundError:
+            raise ValueError(f"not found: {path!r}") from None
+        except OSError as e:
+            raise ValueError(f"cannot read {path!r}: {type(e).__name__}") from None
+    if len(raw) > MAX_CSV_BYTES:
+        raise ValueError(f"CSV larger than {MAX_CSV_BYTES} bytes")
+    return _decode(raw, label)
 
 
 def _sniff(text: str) -> str:
@@ -80,6 +115,11 @@ def load_quarters(path: str) -> List[Quarter]:
     try:
         reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=_sniff(text))
         fields = {(f or "").strip().lower() for f in (reader.fieldnames or [])}
+        names = [(f or "").strip().lower() for f in (reader.fieldnames or [])]
+        dup = sorted({n for n in names if n and names.count(n) > 1})
+        if dup:
+            raise ValueError("CSV has repeated column name(s): " + ", ".join(_clean(d) for d in dup))
+        has_assoc, has_excl = "associates" in fields, "excluded" in fields
         by_date = "date" in fields
         by_quarter = "quarter_end" in fields
         if "amount" not in fields or by_date == by_quarter:
@@ -89,15 +129,17 @@ def load_quarters(path: str) -> List[Quarter]:
             if row.get(None):
                 raise ValueError(f"row {n}: more columns than the header (quote amounts that "
                                  "contain commas, e.g. \"1,250\")")
-            norm = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()
-                    if isinstance(v, (str, type(None)))}
+            norm = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
             if not any(norm.values()):
                 continue
             try:
                 if not norm.get("amount"):
                     raise InputError("amount is empty")
-                amount = (_opt_amount(norm, "amount") + _opt_amount(norm, "associates")
-                          - _opt_amount(norm, "excluded"))
+                amount = parse_amount(norm["amount"])
+                if has_assoc:
+                    amount += _opt_amount(norm, "associates")
+                if has_excl:
+                    amount -= _opt_amount(norm, "excluded")
                 if by_date:
                     try:
                         d = dt.date.fromisoformat(norm["date"])
@@ -111,7 +153,7 @@ def load_quarters(path: str) -> List[Quarter]:
             if len(rows) > 200_000:
                 raise ValueError("too many rows")
     except csv.Error as e:
-        raise ValueError(f"cannot read {path!r}: {type(e).__name__}") from None
+        raise ValueError(f"cannot read {path!r}: CSV format problem ({e})") from None
     if not rows:
         raise ValueError(f"no rows in {path!r}")
     return aggregate_transactions(rows) if by_date else rows
@@ -140,8 +182,12 @@ def _fail(args, msg: str) -> int:
     msg = _clean(msg)
     print(f"gstwatch: {msg}", file=sys.stderr)
     if getattr(args, "json", False):
-        print(json.dumps({"error": msg, "exit": 2, "not_tax_advice": True}))
+        print(json.dumps({"error": msg, "exit": 2, "not_tax_advice": True,
+                          "schema_version": SCHEMA_VERSION}))
     return 2
+
+
+_EXIT: "dict[str, int]" = {}
 
 
 def main(argv: "list[str] | None" = None) -> int:
@@ -152,18 +198,26 @@ def main(argv: "list[str] | None" = None) -> int:
             os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
         except (OSError, ValueError):
             pass
-        return 0
+        return _EXIT.get("code", 0)  # keep the real answer (3 = register) for scripts
+    except OSError as e:  # e.g. disk full / closed stdout while printing
+        try:
+            print(f"gstwatch: cannot write output ({type(e).__name__})", file=sys.stderr)
+        except OSError:
+            pass
+        return 2
 
 
 def _main(argv) -> int:
+    _EXIT.clear()
+    _Parser.argv_seen = list(sys.argv[1:] if argv is None else argv)
     for stream in (sys.stdout, sys.stderr):  # never crash on a legacy console code page
         try:
-            stream.reconfigure(errors="replace")
+            stream.reconfigure(errors="replace")  # type: ignore[union-attr]
         except (AttributeError, ValueError, OSError):
             pass
-    ap = argparse.ArgumentParser(
+    ap = _Parser(
         prog="gstwatch",
-        description="GST/HST small-supplier threshold tests and dates (CRA rules, Oct 2026). "
+        description="GST/HST small-supplier threshold tests and dates (CRA rules, re-verified 2026-11-07). "
                     "Not tax advice.",
     )
     ap.add_argument("--version", action="version", version=f"gstwatch {__version__}")
@@ -171,8 +225,8 @@ def _main(argv) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     c = sub.add_parser("check", help="run the small-supplier tests over your quarters")
-    c.add_argument("csvfile", nargs="?", help="CSV: quarter_end,amount  or  date,amount "
-                   "(transactions; optional associates, excluded columns)")
+    c.add_argument("csvfile", nargs="?", help="CSV file, or - for standard input: quarter_end,amount "
+                   "or date,amount (transactions; optional associates, excluded columns)")
     c.add_argument("--quarter", action="append", metavar="YYYY-MM-DD=AMOUNT",
                    help="inline quarter (repeatable; combined with csvfile if given)")
     c.add_argument("--associates", action="append", metavar="2026Q1=AMOUNT",
@@ -196,7 +250,7 @@ def _main(argv) -> int:
                    help="machine-readable output (also accepted before the subcommand)")
 
     f = sub.add_parser("freq", help="assigned filing frequency from annualized supplies")
-    f.add_argument("annualized", type=float, help="worldwide taxable supplies, annualized")
+    f.add_argument("annualized", type=str, help="worldwide taxable supplies, annualized")
     f.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
 
     r = sub.add_parser("records", help="6-year record retention deadline for a transaction")
@@ -209,11 +263,13 @@ def _main(argv) -> int:
 
     if args.cmd == "freq":
         try:
+            args.annualized = parse_amount(args.annualized)
             band = filing_frequency(args.annualized)
         except InputError as e:
             return _fail(args, str(e))
         if args.json:
-            print(json.dumps({"annualized": args.annualized, "filing_frequency": band}))
+            print(json.dumps({"annualized": args.annualized, "filing_frequency": band,
+                              "schema_version": SCHEMA_VERSION, "gstwatch_version": __version__}))
         else:
             print(f"C${args.annualized:,.0f} annualized -> {band} filing "
                   "(CRA assigned periods: annual <= 1.5M, quarterly <= 6M, monthly above)")
@@ -226,7 +282,9 @@ def _main(argv) -> int:
             return _fail(args, str(e))
         if args.json:
             print(json.dumps({"transaction": args.transaction.isoformat(),
-                              "retain_until": deadline.isoformat()}))
+                              "retain_until": deadline.isoformat(),
+                              "schema_version": SCHEMA_VERSION,
+                              "gstwatch_version": __version__}))
         else:
             print(f"Transaction {args.transaction.isoformat()}: keep records until "
                   f"{deadline.isoformat()} (6 years from the end of the year it relates to)")
@@ -284,9 +342,13 @@ def _main(argv) -> int:
         return _fail(args, str(e))
     status.notes[0:0] = adj_notes
     must = (not status.small_supplier) or status.taxi_must_register
+    _EXIT["code"] = 3 if must else 0
     if args.json:
-        print(json.dumps(status.as_dict(), indent=2))
-        return 3 if must else 0
+        out = status.as_dict()
+        out["schema_version"] = SCHEMA_VERSION
+        out["gstwatch_version"] = __version__
+        print(json.dumps(out, indent=2))
+        return _EXIT["code"]
 
     print(f"Total across {len(quarters)} quarter(s): C${status.total:,.2f}")
     print(f"Threshold used: C${status.threshold:,.0f} ({status.entity})")
@@ -295,7 +357,7 @@ def _main(argv) -> int:
     if status.small_supplier and status.taxi_must_register:
         label += " (under the threshold, BUT taxi/ride-share operators must register anyway)"
     print(f"Small supplier: {label} (trigger: {status.trigger})")
-    if status.effective_date:
+    if status.effective_date and status.register_by:
         print(f"Effective registration date: {status.effective_date.isoformat()}"
               f"  [{status.effective_basis}]")
         print(f"Register by:                {status.register_by.isoformat()} "
@@ -310,7 +372,7 @@ def _main(argv) -> int:
                if status.possibly_overdue else ""))
     for note in status.notes:
         print(f"  - {_clean(note)}")
-    print("\nPublished CRA rules applied to your numbers — not tax advice.")
+    print("\nPublished CRA rules applied to your numbers - not tax advice.")
     # 3 = registration required / exceeded, useful for scripts that treat it distinctly
     return 3 if must else 0
 

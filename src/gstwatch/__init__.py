@@ -1,6 +1,6 @@
 """gstwatch — GST/HST small-supplier threshold companion.
 
-Rules verified against Canada.ca in October 2026 (see README). Not tax advice:
+Rules verified against Canada.ca, last re-verified 2026-11-07 (see README). Not tax advice:
 it applies the published rules to the numbers you give it and shows its work.
 """
 

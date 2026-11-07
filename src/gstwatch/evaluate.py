@@ -1,6 +1,6 @@
 """Small-supplier tests and the dates CRA's rules produce.
 
-Verified October 2026 (canada.ca):
+Verified October 2026, re-verified 2026-11-07 (canada.ca):
 * C$30,000 threshold: exceeded in ONE calendar quarter, or across FOUR OR
   FEWER consecutive calendar quarters (worldwide taxable supplies incl.
   zero-rated supplies and associates', minus the listed exclusions).
@@ -24,7 +24,7 @@ import datetime as dt
 import math
 import re
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 THRESHOLD = 30000
 PSB_THRESHOLD = 50000
@@ -91,6 +91,10 @@ def parse_amount(text: str) -> float:
     12.50 or 1250), 1_000, 0x10, non-ASCII digits, stray letters, NaN/inf.
     """
     t = text.strip()
+    if _PLAIN.fullmatch(t):  # fast path: the overwhelmingly common plain "1234.56"
+        v = float(t)
+        if math.isfinite(v):
+            return v
     neg = False
     if t.startswith("-") or t.startswith("\u2212"):
         neg, t = True, t[1:].strip()
@@ -119,13 +123,13 @@ def aggregate_transactions(rows: Sequence[Tuple[dt.date, float]]) -> List[Quarte
     """Sum dated transactions (refund rows may be negative) into calendar quarters."""
     if len(rows) > MAX_TRANSACTIONS:
         raise InputError(f"too many transaction rows (max {MAX_TRANSACTIONS})")
-    sums = {}
+    sums: Dict[Tuple[int, int], float] = {}
     for d, a in rows:
         if not math.isfinite(a):
             raise InputError(f"amount on {d.isoformat()} is not a finite number")
-        q = to_quarter_end(d)
-        sums[q] = sums.get(q, 0.0) + a
-    return sorted(sums.items())
+        k = (d.year, (d.month - 1) // 3 + 1)  # cheap key; dates built once per quarter below
+        sums[k] = sums.get(k, 0.0) + a
+    return sorted((quarter_end(y, q), v) for (y, q), v in sums.items())
 
 
 def validate_quarters(quarters: Sequence[Quarter]) -> List[Quarter]:
@@ -240,7 +244,7 @@ def evaluate(quarters: Sequence[Quarter],
         freq, basis = filing_frequency(trailing * 4 / (hi - lo + 1)), \
             f"ESTIMATE: {hi - lo + 1} quarter(s) scaled to a year (CRA uses actual annual revenue)"
 
-    common = dict(total=total, filing_frequency=freq, filing_basis=basis, threshold=threshold,
+    common: Dict[str, Any] = dict(total=total, filing_frequency=freq, filing_basis=basis, threshold=threshold,
                   entity=entity, taxi_must_register=taxi, gaps=gaps)
     notes: List[str] = []
     if taxi:
@@ -251,7 +255,7 @@ def evaluate(quarters: Sequence[Quarter],
                      + ", ".join(g.isoformat() for g in gaps))
 
     # candidate 1: single quarter over the threshold (earliest)
-    single = None
+    single: Optional[Tuple[int, dt.date, dt.date]] = None
     for i in sorted(amt):
         if amt[i] > threshold:
             end = _qdate(i)
@@ -263,7 +267,7 @@ def evaluate(quarters: Sequence[Quarter],
             break
 
     # candidate 2: 2-4 consecutive calendar quarters, earliest window end
-    rolling = None
+    rolling: Optional[Tuple[int, int, float]] = None
     for j in range(lo, hi + 1):
         for size in (2, 3, 4):
             s = sum(get(k) for k in range(j - size + 1, j + 1))
@@ -282,6 +286,7 @@ def evaluate(quarters: Sequence[Quarter],
         pick = "rolling"
 
     if pick == "single":
+        assert single is not None
         i, end, effective = single
         n = notes + [
             f"one quarter alone is C${amt[i]:,.2f} > C${threshold:,.0f}",
@@ -311,6 +316,7 @@ def evaluate(quarters: Sequence[Quarter],
                     effective_basis="supply date given" if known else "latest possible = quarter end",
                     notes=n, **common)
     elif pick == "rolling":
+        assert rolling is not None
         j, size, s = rolling
         end = _qdate(j)
         effective = next_month_end(end)
@@ -344,7 +350,7 @@ def evaluate(quarters: Sequence[Quarter],
                     effective_basis=basis, notes=n, **common)
         if single and crossing_date is None:
             early = _qdate(single[0] - 1) + dt.timedelta(days=1)
-            if early < st.effective_earliest:
+            if st.effective_earliest is not None and early < st.effective_earliest:
                 st.effective_earliest = early
                 st.register_by_earliest = early + dt.timedelta(days=REGISTER_DAYS)
                 st.notes.append(f"a single quarter also exceeded the threshold ({single[1].isoformat()}); "
@@ -364,8 +370,11 @@ def evaluate(quarters: Sequence[Quarter],
                         f"quarter ending {_qdate(nxt).isoformat()} keeps you at or under "
                         f"C${threshold:,.0f} (exceeding means strictly more)"], **common)
 
-    if first_supply is not None and st.trigger == "none":
-        st.notes.append("--first-supply ignored: you are still a small supplier")
+    if st.trigger == "none":
+        if first_supply is not None:
+            st.notes.append("--first-supply ignored: you are still a small supplier")
+        if crossing_date is not None:
+            st.notes.append("--crossing ignored: no quarter exceeded the threshold")
     if as_of is not None and st.register_by:
         st.days_to_register = (st.register_by - as_of).days
         st.overdue = st.days_to_register < 0

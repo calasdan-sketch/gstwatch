@@ -5,9 +5,9 @@
     "seed": 20261107
   },
   "timing_indicative": {
-    "evaluate_400_quarters_ms_each": 2.771,
-    "load_100000_transaction_rows_s": 1.377,
-    "parse_amount_us_each": 9.12,
+    "evaluate_400_quarters_ms_each": 5.544,
+    "load_100000_transaction_rows_s": 1.087,
+    "parse_amount_us_each": 12.7,
     "quarters_from_100000_rows": 300
   }
 }

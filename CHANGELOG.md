@@ -1,6 +1,20 @@
 # Changelog
 
 ## 0.2.0 (unreleased)
+Round 4 (what a stranger gets from `pip install`)
+- Fix: `python -m gstwatch` did not work (no `__main__`).
+- Fix: `check ... | head` turned exit code 3 ("register") into 0; the real code is kept.
+- Fix: a full disk / closed stdout printed a traceback; now a one-line error, exit 2.
+- Fix: a CSV with a repeated column name (e.g. two `date` columns) silently used the last one; now rejected.
+- Fix: `freq` accepted `1_000` and rejected `1,400,000`; it now uses the same strict money parser as everything else.
+- Fix: `--crossing` was silently ignored when no quarter exceeded the threshold; now says so.
+- Fix: non-ASCII dash in the footer garbled on legacy Windows consoles; output is ASCII-safe.
+- Fix: packaging metadata. `setuptools>=77` is required for the SPDX `license` string (was `>=68`); added project URLs, author "Calas Automations Inc.", Python 3.9-3.13 classifiers, `py.typed`, CHANGELOG/bench/docs in the sdist; LICENSE holder matches the author.
+- Add: `check -` reads standard input; Excel UTF-16 "Unicode Text" files read; non-UTF-8 files get a "Save As CSV UTF-8" hint.
+- Add: usage errors are JSON under `--json`; every `--json` output carries `schema_version` (1) and `gstwatch_version`.
+- Add: README library example (tested), CI/script usage, Windows notes; CI now also runs on Windows and installs the built wheel into a clean venv.
+- Speed: reading transaction CSVs is about 1.5x faster (plain-number fast path, no per-row work for absent columns).
+- Tests: 96 -> 111. See `docs/ROUND4.md`.
 Round 3
 - Fix (silent wrong answer): amounts like `12,50` were read as 1250, `1C0` as 10, `1_000`/non-ASCII digits accepted. Money parsing is now strict; ambiguous forms are rejected.
 - Fix: `check /dev/zero` (or a FIFO) hung forever; only regular files are read, bounded.
