@@ -1,0 +1,106 @@
+{
+  "mutants": 23,
+  "killed": 22,
+  "survivors": [
+    {
+      "mutant": "headroom can go negative",
+      "result": "SURVIVED",
+      "note": "a small supplier has every 1-4 quarter window at or under the threshold, so the room is never negative"
+    }
+  ],
+  "all": [
+    {
+      "mutant": "single quarter: > becomes >=",
+      "result": "killed"
+    },
+    {
+      "mutant": "rolling window: > becomes >=",
+      "result": "killed"
+    },
+    {
+      "mutant": "register window 29 -> 30 days",
+      "result": "killed"
+    },
+    {
+      "mutant": "threshold 30000 -> 30001",
+      "result": "killed"
+    },
+    {
+      "mutant": "PSB threshold 50000 -> 40000",
+      "result": "killed"
+    },
+    {
+      "mutant": "rolling test ignores 4-quarter windows",
+      "result": "killed"
+    },
+    {
+      "mutant": "month-end after December broken",
+      "result": "killed"
+    },
+    {
+      "mutant": "annual filing limit 1.5M -> 1.4M",
+      "result": "killed"
+    },
+    {
+      "mutant": "quarterly filing limit 6M -> 5M",
+      "result": "killed"
+    },
+    {
+      "mutant": "records: 6 years -> 5",
+      "result": "killed"
+    },
+    {
+      "mutant": "records: fiscal year ignored",
+      "result": "killed"
+    },
+    {
+      "mutant": "mid-quarter clamp removed",
+      "result": "killed"
+    },
+    {
+      "mutant": "headroom can go negative",
+      "result": "SURVIVED",
+      "note": "a small supplier has every 1-4 quarter window at or under the threshold, so the room is never negative"
+    },
+    {
+      "mutant": "earliest possible date = quarter end",
+      "result": "killed"
+    },
+    {
+      "mutant": "short-history filing estimate not scaled",
+      "result": "killed"
+    },
+    {
+      "mutant": "trailing-four test off by one",
+      "result": "killed"
+    },
+    {
+      "mutant": "negative quarter accepted",
+      "result": "killed"
+    },
+    {
+      "mutant": "thousands separator group size",
+      "result": "killed"
+    },
+    {
+      "mutant": "exact-decimal sums replaced by float",
+      "result": "killed"
+    },
+    {
+      "mutant": "excluded sales added instead of subtracted",
+      "result": "killed"
+    },
+    {
+      "mutant": "exit code 3 -> 1",
+      "result": "killed"
+    },
+    {
+      "mutant": "ambiguous dates accepted as day-first",
+      "result": "killed"
+    },
+    {
+      "mutant": "single wins ties against rolling",
+      "result": "killed"
+    }
+  ]
+}

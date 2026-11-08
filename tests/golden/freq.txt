@@ -1,0 +1,1 @@
+C$1,400,000 annualized -> annual filing (CRA assigned periods: annual <= 1.5M, quarterly <= 6M, monthly above)

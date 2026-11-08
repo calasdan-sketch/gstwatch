@@ -1,0 +1,20 @@
+Total across 1 quarter(s): C$31,000.00
+Threshold used: C$30,000 (supplier)
+Filing frequency (assigned): annual [ESTIMATE: 1 quarter(s) scaled to a year (CRA uses actual annual revenue)]
+Small supplier: NO (trigger: single-quarter)
+Effective registration date: 2026-03-31  [latest possible = quarter end]
+Register by:                2026-04-29 (29 days from the effective date)
+Earliest possible register-by: 2026-01-30 (plan to this date if you are unsure)
+Days to register: 14  ** POSSIBLY OVERDUE if the crossing supply was early in the quarter **
+  - one quarter alone is C$31,000.00 > C$30,000
+  - charge GST/HST on the supply that takes you over the threshold; effective registration is no later than that supply — pass --crossing YYYY-MM-DD if you know the exact supply date; using the quarter end as the latest possible date
+  - register within 29 days of the effective date
+  - if the crossing supply was early in the quarter, the effective date could be as early as 2026-01-01 (register by 2026-01-30); register-by shown is the LATEST possible
+  - filing frequency is an approximation: CRA assigns it from taxable supplies made in Canada in your preceding fiscal year, not the worldwide figure used for the threshold (canada.ca, change-account)
+  - Enter sales before GST/HST (canada.ca does not spell this out: unverified), in Canadian dollars. Not modeled: which supplies are associates' or excluded, voluntary registration, charities; enter already-adjusted figures.
+
+Quarter-by-quarter working (trailing totals; '*' = over the threshold):
+  Quarter end          Amount         Last 2         Last 3         Last 4  Trips
+  2026-03-31       31,000.00*     31,000.00*     31,000.00*     31,000.00*  single-quarter
+
+Published CRA rules applied to your numbers - not tax advice.

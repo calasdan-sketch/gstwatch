@@ -1,0 +1,10 @@
+Total across 2 quarter(s): C$15,000.00
+Threshold used: C$30,000 (supplier)
+Filing frequency (assigned): annual [ESTIMATE: 2 quarter(s) scaled to a year (CRA uses actual annual revenue)]
+Small supplier: YES (trigger: none)
+  - total C$15,000.00 stays within C$30,000 for both tests (any single quarter, and 4-or-fewer consecutive quarters)
+  - room left: up to C$15,000.00 of taxable supplies in the quarter ending 2026-09-30 keeps you at or under C$30,000 (exceeding means strictly more)
+  - filing frequency is an approximation: CRA assigns it from taxable supplies made in Canada in your preceding fiscal year, not the worldwide figure used for the threshold (canada.ca, change-account)
+  - Enter sales before GST/HST (canada.ca does not spell this out: unverified), in Canadian dollars. Not modeled: which supplies are associates' or excluded, voluntary registration, charities; enter already-adjusted figures.
+
+Published CRA rules applied to your numbers - not tax advice.

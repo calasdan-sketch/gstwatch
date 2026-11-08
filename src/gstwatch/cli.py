@@ -10,17 +10,23 @@ import os
 import stat
 import sys
 import unicodedata
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
-from . import __version__
+from . import __author__, __version__
 from .evaluate import (
+    AmbiguousDate,
     InputError,
     Quarter,
     aggregate_transactions,
+    date_from_parts,
+    dsum,
     evaluate,
     filing_frequency,
     parse_amount,
+    parse_date_cell,
     parse_quarter_label,
+    quarter_table,
+    resolve_ambiguous,
     retention_deadline,
 )
 
@@ -103,28 +109,56 @@ def _opt_amount(norm: Dict[str, str], key: str) -> float:
     return parse_amount(v) if v else 0.0
 
 
-def load_quarters(path: str) -> List[Quarter]:
+def _pick_column(names: List[str], wanted: str, flag: str) -> str:
+    w = wanted.strip().lower()
+    hits = [n for n in names if n == w]
+    if not hits:
+        raise ValueError(f"{flag} {_clean(repr(wanted))} is not a column in the file (columns: "
+                         + ", ".join(_clean(n) for n in names if n) + ")")
+    return w
+
+
+def load_quarters(path: str, date_column: "str | None" = None, amount_column: "str | None" = None,
+                  date_order: "str | None" = None, skip_where: "Sequence[str] | None" = None,
+                  stats: "Dict[str, int] | None" = None) -> List[Quarter]:
     """CSV -> calendar-quarter totals.
 
     Either ``quarter_end,amount`` (one row per quarter, duplicates rejected) or
     ``date,amount`` (any transactions; summed into calendar quarters). Optional
     ``associates`` and ``excluded`` columns adjust each row: amount + associates - excluded.
-    Comma, semicolon or tab delimited.
+    Comma, semicolon or tab delimited. ``date_column`` / ``amount_column`` name the columns of
+    an accounting-software export (case-insensitive); naming a date column means transactions.
+    Numeric dates like 03/04/2026 need an unambiguous file or ``date_order`` ('dmy'/'mdy').
+    ``skip_where`` items look like ``"Financial Status=voided"``: rows whose column equals the
+    value (case-insensitive) are left out; ``stats["skipped"]`` receives how many.
     """
     text = _read_text(path)
     try:
         reader = csv.DictReader(io.StringIO(text, newline=""), delimiter=_sniff(text))
-        fields = {(f or "").strip().lower() for f in (reader.fieldnames or [])}
         names = [(f or "").strip().lower() for f in (reader.fieldnames or [])]
+        fields = set(names)
         dup = sorted({n for n in names if n and names.count(n) > 1})
         if dup:
             raise ValueError("CSV has repeated column name(s): " + ", ".join(_clean(d) for d in dup))
         has_assoc, has_excl = "associates" in fields, "excluded" in fields
-        by_date = "date" in fields
-        by_quarter = "quarter_end" in fields
-        if "amount" not in fields or by_date == by_quarter:
-            raise ValueError("CSV needs an amount column and exactly one of quarter_end or date")
+        dcol = _pick_column(names, date_column, "--date-column") if date_column else "date"
+        acol = _pick_column(names, amount_column, "--amount-column") if amount_column else "amount"
+        by_date = dcol in fields
+        by_quarter = "quarter_end" in fields and not date_column
+        if acol not in fields or by_date == by_quarter:
+            shown = ", ".join(_clean(n) for n in names if n)
+            raise ValueError("CSV needs an amount column and exactly one of quarter_end or date "
+                             f"(columns found: {shown}); for an accounting-software export name "
+                             "them with --date-column and --amount-column")
+        skips: List[Tuple[str, str]] = []
+        for item in skip_where or []:
+            col, eq, val = item.partition("=")
+            if not eq or not col.strip():
+                raise ValueError(f"bad --skip-where {_clean(repr(item))}, expected COLUMN=VALUE")
+            skips.append((_pick_column(names, col, "--skip-where"), val.strip().casefold()))
+        skipped = 0
         rows: List[Tuple[dt.date, float]] = []
+        pending: List[Tuple[int, AmbiguousDate, float]] = []
         for n, row in enumerate(reader, start=2):
             if row.get(None):
                 raise ValueError(f"row {n}: more columns than the header (quote amounts that "
@@ -132,30 +166,46 @@ def load_quarters(path: str) -> List[Quarter]:
             norm = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
             if not any(norm.values()):
                 continue
+            if skips and any(norm.get(c, "").casefold() == v for c, v in skips):
+                skipped += 1
+                continue
             try:
-                if not norm.get("amount"):
+                if not norm.get(acol):
                     raise InputError("amount is empty")
-                amount = parse_amount(norm["amount"])
+                amount = parse_amount(norm[acol])
                 if has_assoc:
-                    amount += _opt_amount(norm, "associates")
+                    amount = dsum(amount, _opt_amount(norm, "associates"))
                 if has_excl:
-                    amount -= _opt_amount(norm, "excluded")
+                    amount = dsum(amount, -_opt_amount(norm, "excluded"))
                 if by_date:
-                    try:
-                        d = dt.date.fromisoformat(norm["date"])
-                    except ValueError:
-                        raise InputError(f"expected YYYY-MM-DD, got {norm['date']!r}") from None
+                    got = parse_date_cell(norm.get(dcol, ""))
+                    if isinstance(got, tuple):
+                        pending.append((n, got, amount))
+                        continue
+                    d = got
                 else:
                     d = parse_quarter_label(norm["quarter_end"])
             except InputError as e:
                 raise ValueError(f"row {n}: {e}") from None
             rows.append((d, amount))
-            if len(rows) > 200_000:
+            if len(rows) + len(pending) > 200_000:
                 raise ValueError("too many rows")
+        if pending:
+            try:
+                order = resolve_ambiguous([p for _, p, _ in pending], date_order)
+            except InputError as e:
+                raise ValueError(str(e)) from None
+            for n, parts, amount in pending:
+                try:
+                    rows.append((date_from_parts(parts, order), amount))
+                except InputError as e:
+                    raise ValueError(f"row {n}: {e}") from None
     except csv.Error as e:
         raise ValueError(f"cannot read {path!r}: CSV format problem ({e})") from None
+    if stats is not None:
+        stats["skipped"] = skipped
     if not rows:
-        raise ValueError(f"no rows in {path!r}")
+        raise ValueError(f"no rows in {path!r}" + (f" (all {skipped} were skipped by --skip-where)" if skipped else ""))
     return aggregate_transactions(rows) if by_date else rows
 
 
@@ -171,7 +221,7 @@ def _parse_inline(items, what: str) -> Dict[dt.date, float]:
         try:
             d, amt = inline.split("=", 1)
             q = parse_quarter_label(d)
-            out[q] = out.get(q, 0.0) + _amount(amt)
+            out[q] = dsum(out.get(q, 0.0), _amount(amt))
         except (ValueError, AttributeError):
             raise ValueError(f"bad {what} {_clean(repr(inline))}, expected YYYY-MM-DD=AMOUNT "
                              "or 2026Q1=AMOUNT") from None
@@ -217,8 +267,9 @@ def _main(argv) -> int:
             pass
     ap = _Parser(
         prog="gstwatch",
-        description="GST/HST small-supplier threshold tests and dates (CRA rules, re-verified 2026-11-07). "
+        description="GST/HST small-supplier threshold tests and dates (CRA rules, re-verified 2026-11-08). "
                     "Not tax advice.",
+        epilog=f"gstwatch {__version__}, maintained by {__author__}; MIT license.",
     )
     ap.add_argument("--version", action="version", version=f"gstwatch {__version__}")
     ap.add_argument("--json", action="store_true")
@@ -235,6 +286,20 @@ def _main(argv) -> int:
     c.add_argument("--excluded", action="append", metavar="2026Q1=AMOUNT",
                    help="subtract financial-services / capital-property / goodwill sales "
                         "that CRA excludes from the test (repeatable)")
+    c.add_argument("--date-column", metavar="NAME",
+                   help="accounting-software export: name of the column holding each sale's date "
+                        "(ISO, '2026-03-31 23:30:00 -0400', '31 Mar 2026'); rows are summed into quarters")
+    c.add_argument("--amount-column", metavar="NAME",
+                   help="name of the column to add up. Pick the one BEFORE tax (e.g. a subtotal), "
+                        "not a total that includes GST/HST")
+    c.add_argument("--date-order", choices=["dmy", "mdy"],
+                   help="how to read dates like 03/04/2026 (day first or month first); needed only "
+                        "when the file does not make it obvious")
+    c.add_argument("--skip-where", action="append", metavar="COLUMN=VALUE",
+                   help="leave out rows whose column equals the value, e.g. \"Financial Status=voided\" "
+                        "(repeatable; case-insensitive). Unpaid, voided or draft orders are your call")
+    c.add_argument("--table", action="store_true",
+                   help="also print the quarter-by-quarter working (trailing 2/3/4-quarter totals)")
     c.add_argument("--crossing", type=_date, help="exact date of the supply that crossed the threshold")
     c.add_argument("--first-supply", type=_date, metavar="YYYY-MM-DD",
                    help="multi-quarter test: date of your first supply after small-supplier "
@@ -294,9 +359,14 @@ def _main(argv) -> int:
         return _fail(args, "charities and public institutions use different tests (C$250,000 gross "
                            "revenue and C$50,000 taxable supplies); not supported. Ask your accountant.")
     quarters: List[Quarter] = []
+    stats: Dict[str, int] = {}
+    if not args.csvfile and (args.date_column or args.amount_column or args.date_order or args.skip_where):
+        return _fail(args, "--date-column, --amount-column, --date-order and --skip-where apply to a CSV file; "
+                           "give the file name (or - for standard input)")
     try:
         if args.csvfile:
-            quarters.extend(load_quarters(args.csvfile))
+            quarters.extend(load_quarters(args.csvfile, args.date_column, args.amount_column,
+                                          args.date_order, args.skip_where, stats))
         for item in args.quarter or []:
             try:
                 d, amt = item.split("=", 1)
@@ -312,6 +382,9 @@ def _main(argv) -> int:
         return _fail(args, "give a CSV file or at least one --quarter")
 
     adj_notes: List[str] = []
+    if args.csvfile and stats.get("skipped"):
+        adj_notes.append(f"{stats['skipped']} row(s) left out by --skip-where "
+                         + "; ".join(_clean(x) for x in args.skip_where))
     if assoc or excl:
         # duplicates among quarters are still rejected by evaluate(); adjust the first only
         adjusted: List[Quarter] = []
@@ -321,7 +394,7 @@ def _main(argv) -> int:
                 adjusted.append((d, a))
                 continue
             seen.add(d)
-            adjusted.append((d, a + assoc.get(d, 0.0) - excl.get(d, 0.0)))
+            adjusted.append((d, dsum(a, assoc.get(d, 0.0), -excl.get(d, 0.0))))
         for label, m in (("associates", assoc), ("excluded", excl)):
             missing = [q for q in m if q not in seen]
             if missing:
@@ -347,6 +420,8 @@ def _main(argv) -> int:
         out = status.as_dict()
         out["schema_version"] = SCHEMA_VERSION
         out["gstwatch_version"] = __version__
+        if args.table:
+            out["table"] = quarter_table(quarters, status.threshold)
         print(json.dumps(out, indent=2))
         return _EXIT["code"]
 
@@ -372,6 +447,15 @@ def _main(argv) -> int:
                if status.possibly_overdue else ""))
     for note in status.notes:
         print(f"  - {_clean(note)}")
+    if args.table:
+        print("\nQuarter-by-quarter working (trailing totals; '*' = over the threshold):")
+        print(f"  {'Quarter end':<12} {'Amount':>14} {'Last 2':>14} {'Last 3':>14} {'Last 4':>14}  Trips")
+        for row in quarter_table(quarters, status.threshold):
+            cells = [row["amount"], row["last_2_quarters"], row["last_3_quarters"], row["last_4_quarters"]]
+            marks = [f"{c:>13,.2f}" + ("*" if c > status.threshold else " ") for c in cells]
+            tail = (row["over_threshold"][0] if row["over_threshold"] else "") + (
+                "  (assumed C$0)" if row["assumed_zero"] else "")
+            print(f"  {row['quarter_end']:<12} " + " ".join(marks) + "  " + tail)
     print("\nPublished CRA rules applied to your numbers - not tax advice.")
     # 3 = registration required / exceeded, useful for scripts that treat it distinctly
     return 3 if must else 0

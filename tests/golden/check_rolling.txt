@@ -1,0 +1,15 @@
+Total across 3 quarter(s): C$31,000.00
+Threshold used: C$30,000 (supplier)
+Filing frequency (assigned): annual [ESTIMATE: 3 quarter(s) scaled to a year (CRA uses actual annual revenue)]
+Small supplier: NO (trigger: rolling)
+Effective registration date: 2026-08-12  [first supply after status ended, as given]
+Register by:                2026-09-10 (29 days from the effective date)
+Earliest possible register-by: 2026-08-29 (plan to this date if you are unsure)
+  - 3 consecutive quarter(s) total C$31,000.00 > C$30,000
+  - small-supplier status ends at the end of the month following the quarter in which the threshold was exceeded
+  - start charging on the first supply after that date; register within 29 days of the effective date
+  - effective date set to your first supply after status ended: 2026-08-12
+  - filing frequency is an approximation: CRA assigns it from taxable supplies made in Canada in your preceding fiscal year, not the worldwide figure used for the threshold (canada.ca, change-account)
+  - Enter sales before GST/HST (canada.ca does not spell this out: unverified), in Canadian dollars. Not modeled: which supplies are associates' or excluded, voluntary registration, charities; enter already-adjusted figures.
+
+Published CRA rules applied to your numbers - not tax advice.

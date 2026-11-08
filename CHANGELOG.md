@@ -1,6 +1,19 @@
 # Changelog
 
 ## 0.2.0 (unreleased)
+Round 5 (CPA, bookkeeper, CRA-rules and accounting-software review)
+- Fix (silent wrong answer at the edge): sums used binary floats, so a history that adds up to exactly C$30,000.00 could come out as 30000.000000000004 and be called "over". Quarter and transaction sums are now exact decimals; headroom is exactly the edge (found by a property test).
+- Fix: a cell of 1e308 in a transaction CSV crashed with a traceback; now "amount ... is implausibly large", exit 2.
+- Fix: very long or pathological date/amount cells could take minutes in the pattern matcher; cells over 64 characters are refused instantly.
+- Fix: `freq` and the filing-frequency line were described as using worldwide supplies; canada.ca's reporting-period page uses taxable supplies made in Canada for the preceding fiscal year. Text and an explicit note corrected (the figure in `check` stays an approximation).
+- Fix: run with `--as-of` inside the quarter that exceeded C$30,000, the "latest possible" effective date was the quarter end, a date in the future; it is now today, because the supply has already happened. Data that stops quarters before `--as-of` is flagged as possibly out of date instead of silently treated as C$0.
+- Add: `--date-column`, `--amount-column`, `--skip-where COLUMN=VALUE` to read any accounting-software or shop export (QuickBooks, Wave, Square, Shopify...); datetimes with zones (`2026-03-31 23:30:00 -0400`), `31 Mar 2026`, `Mar 31, 2026`; `(500.00)` as a negative; numeric `03/04/2026` refused unless unambiguous or `--date-order dmy|mdy` is given. Column names are never guessed.
+- Add: `--table` (and `table` in `--json`): quarter-by-quarter working with trailing 2/3/4-quarter totals.
+- Add: a note on every result to enter sales before GST/HST in Canadian dollars (canada.ca does not say outright: marked unverified).
+- Add: `__author__`, `maintainers` in the package metadata, maintainer line in `--help`; tests pin "Calas Automations Inc." everywhere.
+- Behaviour change: with a CSV the date is now read by one strict reader on every Python version (3.11+'s `fromisoformat` used to accept `20260331` and `2026-W13-2`; 3.9 did not; both are now refused).
+- Tests: 111 -> 187 (property tests, golden files for every output format, hypothesis tests where installed); `bench/mutation.py` breaks 23 rules one at a time and the suite catches 22 (the 23rd cannot change any output). See `docs/ROUND5.md`.
+- Speed: exact sums and a stricter date reader cost something (four side-by-side runs on a noisy machine: engine call 1-3x slower, still a few milliseconds; loading 100,000 rows between equal and about 1.5x slower).
 Round 4 (what a stranger gets from `pip install`)
 - Fix: `python -m gstwatch` did not work (no `__main__`).
 - Fix: `check ... | head` turned exit code 3 ("register") into 0; the real code is kept.

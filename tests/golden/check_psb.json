@@ -1,0 +1,33 @@
+{
+  "total": 45000.0,
+  "small_supplier": true,
+  "trigger": "none",
+  "threshold": 50000,
+  "entity": "psb",
+  "taxi_must_register": false,
+  "crossing_quarter": null,
+  "window": [],
+  "window_total": 0.0,
+  "effective_date": null,
+  "register_by": null,
+  "effective_date_earliest": null,
+  "register_by_earliest": null,
+  "effective_date_basis": "",
+  "days_to_register": null,
+  "overdue": null,
+  "possibly_overdue": null,
+  "filing_frequency": "annual",
+  "filing_basis": "ESTIMATE: 1 quarter(s) scaled to a year (CRA uses actual annual revenue)",
+  "assumed_zero_quarters": [],
+  "next_quarter": "2026-06-30",
+  "next_quarter_headroom": 5000.0,
+  "notes": [
+    "total C$45,000.00 stays within C$50,000 for both tests (any single quarter, and 4-or-fewer consecutive quarters)",
+    "room left: up to C$5,000.00 of taxable supplies in the quarter ending 2026-06-30 keeps you at or under C$50,000 (exceeding means strictly more)",
+    "filing frequency is an approximation: CRA assigns it from taxable supplies made in Canada in your preceding fiscal year, not the worldwide figure used for the threshold (canada.ca, change-account)",
+    "Enter sales before GST/HST (canada.ca does not spell this out: unverified), in Canadian dollars. Not modeled: which supplies are associates' or excluded, voluntary registration, charities; enter already-adjusted figures."
+  ],
+  "not_tax_advice": true,
+  "schema_version": 1,
+  "gstwatch_version": "0.2.0"
+}

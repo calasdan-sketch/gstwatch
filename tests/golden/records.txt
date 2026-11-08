@@ -1,0 +1,1 @@
+Transaction 2026-05-10: keep records until 2032-12-31 (6 years from the end of the year it relates to)
